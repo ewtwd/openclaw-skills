@@ -1,16 +1,16 @@
 ---
-name: gitee-skills-publisher
-description: 将当前设备本地的 workspace/skills 全量发布到 Gitee 仓库。用于“上传技能到 Gitee”“同步本地 skills 到 Gitee”“发布当前 skills 版本”“把本机 skills 推到远端仓库”等场景。仅在主编辑设备使用。
+name: github-skills-publisher
+description: 将当前设备本地的 workspace/skills 全量发布到 GitHub 仓库。用于“发布 skills 到 GitHub”“上传 skills 到 GitHub”“推送 skills 到 GitHub”“同步本地 skills 到 GitHub”“发布当前 skills 版本”等场景。仅在主编辑设备使用。
 ---
 
-# Gitee Skills Publisher
+# GitHub Skills Publisher
 
-把当前设备上的 `workspace/skills` 作为唯一源，发布到 Gitee 仓库。
+把当前设备上的 `workspace/skills` 作为唯一源，发布到 GitHub 仓库。
 
 ## 默认行为
 
 - 源目录：`%USERPROFILE%\.openclaw\workspace\skills`
-- 默认仓库：`https://gitee.com/chen-zhuoxiao/openclaw-skills.git`
+- 默认仓库：`git@github.com:ewtwd/openclaw-skills.git`
 - 默认分支：`master`
 - 运行方式：克隆远端仓库到临时目录 → 用本地 `skills/` 覆盖仓库中的 `skills/` → `git add/commit/push`
 
@@ -31,7 +31,7 @@ description: 将当前设备本地的 workspace/skills 全量发布到 Gitee 仓
 ## 前置条件
 
 - 设备已安装 `git`
-- 当前用户对 Gitee 仓库有 push 权限
+- 当前用户对 GitHub 仓库有 push 权限
 - 该设备已配置好 git 凭据（HTTPS 凭据管理或 SSH）
 
 ## 正式入口
@@ -68,6 +68,6 @@ powershell -ExecutionPolicy Bypass -File ${SKILL_DIR}/scripts/publish-skills-to-
 
 如果失败，优先检查：
 - git 是否安装
-- Gitee 凭据是否有效
+- GitHub SSH 凭据是否有效
 - 分支名是否正确
 - 远端仓库是否存在

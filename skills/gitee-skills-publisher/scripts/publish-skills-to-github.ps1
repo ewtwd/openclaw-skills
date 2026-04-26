@@ -32,8 +32,7 @@ function Get-GitConfigValue {
 
   Push-Location $WorkingDirectory
   try {
-    $value = (& git config --get $Key | Out-String).Trim()
-    return $value
+    return ((& git config --get $Key | Out-String).Trim())
   }
   finally {
     Pop-Location
@@ -181,7 +180,6 @@ try {
   }
 
   Copy-SkillsTree -From $resolvedSource -To $skillsTarget
-
   Invoke-Git -Args @("config", "user.name", $GitUserName) -WorkingDirectory $repoDir
   Invoke-Git -Args @("config", "user.email", $GitUserEmail) -WorkingDirectory $repoDir
 
