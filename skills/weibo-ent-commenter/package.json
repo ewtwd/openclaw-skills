@@ -1,0 +1,8 @@
+{
+  "name": "weibo-ent-commenter",
+  "version": "1.0.0",
+  "description": "微博文娱高人味评论生成器",
+  "type": "module",
+  "main": "scripts/weibo-ent-commenter.mjs",
+  "dependencies": {}
+}

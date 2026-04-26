@@ -1,0 +1,12 @@
+{
+  "name": "social-publisher",
+  "version": "1.0.0",
+  "description": "社交平台发布工具（调试版 Chrome + Node/Playwright）",
+  "main": "scripts/social-publisher.mjs",
+  "scripts": {
+    "postinstall": "playwright install chromium"
+  },
+  "dependencies": {
+    "playwright": "^1.58.2"
+  }
+}
