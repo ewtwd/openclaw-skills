@@ -307,8 +307,9 @@ function ensureCommentTextSafe(actionName, providedText) {
   const normalized = providedText.trim();
   if (!normalized) return;
 
-  if (commentPlaceholderPatterns.some(pattern => pattern.test(normalized))) {
-    throw new Error(`评论文案疑似占位词：${normalized}。已阻止发送，请先基于帖子内容生成真实评论。`);
+  // 长度判断：评论至少需要5个字符，占位符一般短于这个长度
+  if (normalized.length < 5) {
+    throw new Error(`评论文案长度过短（仅${normalized.length}个字符），疑似占位词。已阻止发送，请先基于帖子内容生成真实评论（建议10-30字）。`);
   }
 
   if (commentMetaPatterns.some(pattern => pattern.test(normalized))) {

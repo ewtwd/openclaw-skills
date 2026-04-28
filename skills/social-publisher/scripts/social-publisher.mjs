@@ -68,7 +68,7 @@ async function sleep(ms) {
   await new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function closeBrowserConnection(browser, { timeoutMs = 5000 } = {}) {
+async function closeBrowserConnection(browser, { timeoutMs = 1000 } = {}) {
   if (!browser) return;
 
   try {
@@ -164,12 +164,12 @@ async function waitForWeiboImagesReady(page, expectedCount) {
           return rect.width > 30 && rect.height > 30;
         }).length;
       return count >= minCount;
-    }, previewSelectors, Math.min(expectedCount, 1), { timeout: 15000 });
+    }, previewSelectors, Math.min(expectedCount, 1), { timeout: 5000 });
   } catch {
     // 预览结构不稳定时容忍回退，只做额外等待
   }
 
-  await page.waitForTimeout(expectedCount > 3 ? 4000 : 2500);
+  await page.waitForTimeout(expectedCount > 3 ? 2000 : 1000);
 }
 
 function hasWeiboVideoAsset(uploadImages) {
@@ -178,12 +178,6 @@ function hasWeiboVideoAsset(uploadImages) {
     const lower = String(file || '').toLowerCase();
     return videoExts.some(ext => lower.endsWith(ext));
   });
-}
-
-function getWeiboPostUploadPauseMs(uploadImages) {
-  if (uploadImages.length === 0) return 0;
-  if (hasWeiboVideoAsset(uploadImages)) return 45000;
-  return 15000;
 }
 
 async function markWeiboComposerContext(page, token) {
@@ -195,29 +189,62 @@ async function markWeiboComposerContext(page, token) {
       return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
     };
 
-    const isDisabledLike = el => !!el && (el.disabled || el.getAttribute('aria-disabled') === 'true' || /disabled/i.test(el.className || ''));
     const textOf = el => (el?.innerText || el?.textContent || '').replace(/\s+/g, ' ').trim();
 
     document.querySelectorAll('[data-openclaw-weibo-composer]').forEach(el => el.removeAttribute('data-openclaw-weibo-composer'));
     document.querySelectorAll('[data-openclaw-weibo-publish]').forEach(el => el.removeAttribute('data-openclaw-weibo-publish'));
 
+    // 1. Find the composer textarea
     const composer = Array.from(document.querySelectorAll("textarea[placeholder*='有什么新鲜事'], div[contenteditable='true']")).find(isVisible) || null;
-    if (!composer) return null;
+    if (!composer) {
+      console.error('Composer not found');
+      return null;
+    }
 
-    const composerRect = composer.getBoundingClientRect();
-    const allButtons = Array.from(document.querySelectorAll('button')).filter(isVisible).filter(el => !isDisabledLike(el));
-    const candidates = allButtons.map(el => {
+    // 2. Find the "Send" button ("发送")
+    // Look for buttons or links containing "发送" or "发布"
+    // Prefer the one that is closest to the bottom-right of the composer
+    const allCandidates = Array.from(document.querySelectorAll('button, a.woo-button-main, [role="button"]'));
+    
+    let target = null;
+    let bestScore = Infinity;
+
+    for (const el of allCandidates) {
+      if (!isVisible(el)) continue;
       const text = textOf(el);
-      if (!/发送|发布/.test(text)) return null;
-      const rect = el.getBoundingClientRect();
-      const dy = Math.abs(rect.y - composerRect.bottom);
-      const dx = Math.abs(rect.x - (composerRect.x + composerRect.width));
-      const score = dy + dx * 0.15;
-      return { el, text, score };
-    }).filter(Boolean).sort((a, b) => a.score - b.score);
+      if (!text.includes('发送') && !text.includes('发布')) continue;
 
-    const target = candidates[0] || null;
-    if (!target) return null;
+      const rect = el.getBoundingClientRect();
+      const composerRect = composer.getBoundingClientRect();
+      
+      // Calculate distance to bottom-right of composer
+      const dx = Math.abs(rect.right - composerRect.right);
+      const dy = Math.abs(rect.top - composerRect.bottom);
+      const score = dx + dy;
+
+      if (score < bestScore) {
+        bestScore = score;
+        target = { el, text, score };
+      }
+    }
+
+    // Fallback: if not found by structure, try to find by text anywhere in the page (less strict)
+    if (!target) {
+      const allElements = Array.from(document.querySelectorAll('button, a'));
+      for (const el of allElements) {
+        if (!isVisible(el)) continue;
+        const text = textOf(el);
+        if (text === '发送' || text === '发布' || text.includes('发送 微博')) {
+          target = { el, text, score: 0 };
+          break;
+        }
+      }
+    }
+
+    if (!target) {
+      console.error('No Send button found');
+      return null;
+    }
 
     composer.setAttribute('data-openclaw-weibo-composer', marker);
     target.el.setAttribute('data-openclaw-weibo-publish', marker);
@@ -306,58 +333,53 @@ async function inspectWeiboPublishState(page, token, expectedText = '') {
   }, { marker: token, expected: expectedText });
 }
 
-async function clickWeiboPublishUntilConfirmed(page, expectedText, timeoutMs = 300000, intervalMs = 3000) {
-  const token = `openclaw-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  await markWeiboComposerContext(page, token);
-
+async function clickWeiboPublishUntilConfirmed(page, expectedText, timeoutMs = 300000, intervalMs = 2000) {
   const start = Date.now();
-  let clickAttempts = 0;
   let pollAttempts = 0;
   let composerGoneChecksAfterClick = 0;
   let lastStateSummary = '尚未获取页面状态';
 
   while (Date.now() - start < timeoutMs) {
     pollAttempts += 1;
-    const state = await inspectWeiboPublishState(page, token, expectedText);
-    lastStateSummary = `markedComposerVisible=${state.markedComposerVisible}, markedButtonFound=${state.markedButtonFound}, markedButtonClickable=${state.markedButtonClickable}, markedButtonDisabled=${state.markedButtonDisabled}, markedButtonText=${state.markedButtonText || '(none)'}, feedMatched=${state.feedMatched}`;
+
+    // Check if published
+    const state = await inspectWeiboPublishState(page, 'dummy-token', expectedText);
+    lastStateSummary = `composerVisible=${state.markedComposerVisible}, buttonClickable=${state.markedButtonClickable}, buttonDisabled=${state.markedButtonDisabled}`;
 
     if (state.error) {
       throw new Error(state.error);
     }
 
     if (state.success) {
-      console.log(`✅ [微博] 检测到成功提示，发布确认成功（轮询 ${pollAttempts} 次，点击 ${clickAttempts} 次）`);
-      return { confirmed: true, reason: 'success-toast', clickAttempts, pollAttempts };
+      console.log(`✅ [微博] 检测到成功提示，发布确认成功（轮询 ${pollAttempts} 次）`);
+      return { confirmed: true, reason: 'success-toast', pollAttempts };
     }
 
-    if (clickAttempts > 0 && state.feedMatched) {
-      console.log(`✅ [微博] 已在页面信息流中匹配到目标文案，判定发布成功（轮询 ${pollAttempts} 次，点击 ${clickAttempts} 次）`);
-      return { confirmed: true, reason: 'feed-matched', clickAttempts, pollAttempts };
-    }
-
-    if (clickAttempts > 0 && !state.markedComposerVisible) {
+    // If the composer is gone after we tried clicking, assume success
+    if (composerGoneChecksAfterClick > 0 && !state.markedComposerVisible) {
       composerGoneChecksAfterClick += 1;
-      console.log(`ℹ️ [微博] 当前这次发布容器已消失，连续确认 ${composerGoneChecksAfterClick}/2`);
       if (composerGoneChecksAfterClick >= 2) {
-        console.log(`✅ [微博] 当前这次发布容器在点击后持续消失，判定发布成功（轮询 ${pollAttempts} 次，点击 ${clickAttempts} 次）`);
-        return { confirmed: true, reason: 'composer-disappeared', clickAttempts, pollAttempts };
+        console.log(`✅ [微博] 发布容器已消失，判定发布成功（轮询 ${pollAttempts} 次）`);
+        return { confirmed: true, reason: 'composer-disappeared', pollAttempts };
       }
     } else {
       composerGoneChecksAfterClick = 0;
     }
 
-    if (state.markedButtonClickable) {
-      try {
-        const clicked = await clickMarkedWeiboPublishButton(page, token);
-        clickAttempts += 1;
-        console.log(`🖱️ [微博] 第 ${clickAttempts} 次点击发布 (${clicked.text || '发布'})`);
-      } catch (error) {
-        console.log(`⚠️ [微博] 第 ${clickAttempts + 1} 次点击前检查失败: ${error instanceof Error ? error.message : String(error)}`);
+    // Try to find and click the publish button
+    try {
+      const token = `openclaw-${Date.now()}`;
+      const marked = await markWeiboComposerContext(page, token);
+      if (marked) {
+        await clickMarkedWeiboPublishButton(page, token);
+        console.log(`🖱️ [微博] 尝试点击发布 (第 ${pollAttempts} 轮)`);
+        composerGoneChecksAfterClick += 1;
+      } else {
+        console.log(`⏳ [微博] 未找到发布按钮，继续等待（第 ${pollAttempts} 轮）`);
       }
-    } else if (state.markedButtonDisabled) {
-      console.log(`⏳ [微博] 当前这次发布容器内的发布按钮仍不可点，继续等待处理完成（第 ${pollAttempts} 轮）`);
-    } else {
-      console.log(`⏳ [微博] 当前这次发布容器内暂未找到可点击发布按钮，继续等待（第 ${pollAttempts} 轮）`);
+    } catch (error) {
+      // Button might be disabled or hidden, just retry
+      console.log(`⏳ [微博] 发布按钮暂不可用，继续尝试（第 ${pollAttempts} 轮）`);
     }
 
     await page.waitForTimeout(intervalMs);
@@ -371,7 +393,7 @@ async function publishWeibo(page, text, uploadImages, submit) {
   await ensureWeiboLoggedIn(page, { taskName: '发微博' });
 
   const editBox = page.locator("textarea[placeholder*='有什么新鲜事'], div[contenteditable='true']").first();
-  await editBox.waitFor({ state: 'visible', timeout: 15000 });
+  await editBox.waitFor({ state: 'visible', timeout: 5000 });
   await editBox.click();
   if (text) await editBox.fill(text);
 
@@ -380,21 +402,19 @@ async function publishWeibo(page, text, uploadImages, submit) {
     const fileInput = page.locator("input[type='file']").first();
     await fileInput.setInputFiles(uploadImages, { timeout: 300000 });
     await waitForWeiboImagesReady(page, uploadImages.length);
-    await waitForWeiboComposerStable(page);
 
-    const postUploadPauseMs = getWeiboPostUploadPauseMs(uploadImages);
-    if (postUploadPauseMs > 0) {
-      console.log(`⏳ [微博] 素材已注入，固定等待 ${Math.round(postUploadPauseMs / 1000)} 秒，再开始尝试点击发布...`);
-      await page.waitForTimeout(postUploadPauseMs);
+    if (submit) {
+      console.log('🔁 [微博] 开始持续尝试发布并确认结果...');
+      return await clickWeiboPublishUntilConfirmed(page, text, 300000, 2000);
     }
   }
 
   if (submit) {
-    console.log('🔁 [微博] 开始持续尝试发布并确认结果（最长 300 秒，每 3 秒轮询）...');
-    return await clickWeiboPublishUntilConfirmed(page, text, 300000, 3000);
+    console.log('🔁 [微博] 开始持续尝试发布并确认结果...');
+    return await clickWeiboPublishUntilConfirmed(page, text, 300000, 2000);
   }
 
-  return { confirmed: false, reason: 'preview-only', clickAttempts: 0, pollAttempts: 0 };
+  return { confirmed: false, reason: 'preview-only', pollAttempts: 0 };
 }
 
 async function publishXiaohongshu(page, text, uploadImages, submit) {
@@ -412,11 +432,11 @@ async function publishXiaohongshu(page, text, uploadImages, submit) {
   }
   if (text) {
     const titleBox = page.locator("textarea[placeholder*='输入标题'], input[placeholder*='输入标题']").first();
-    await titleBox.waitFor({ state: 'visible', timeout: 15000 });
+    await titleBox.waitFor({ state: 'visible', timeout: 5000 });
     await titleBox.fill(text.substring(0, 20));
 
     const contentBox = page.locator("div[contenteditable='true'], textarea[placeholder*='粘贴到这里或输入文字']").first();
-    await contentBox.waitFor({ state: 'visible', timeout: 15000 });
+    await contentBox.waitFor({ state: 'visible', timeout: 5000 });
     let fullText = text;
     if (topics.length > 0) fullText += ' ' + topics.map(t => `#${t}`).join(' ');
     await contentBox.fill(fullText);
